@@ -1,0 +1,205 @@
+name: Build WineDesk Live ISO
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build-iso:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install live-build tools
+        run: |
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            live-build debootstrap squashfs-tools xorriso \
+            grub-pc-bin grub-efi-amd64-bin mtools dosfstools \
+            syslinux-common isolinux rsync cpio
+
+      - name: Create WineDesk Live configuration
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          mkdir -p config/package-lists
+          mkdir -p config/hooks/normal
+          mkdir -p config/includes.chroot/etc/xdg/openbox
+          mkdir -p config/includes.chroot/etc/xdg/tint2
+          mkdir -p config/includes.chroot/usr/local/bin
+          mkdir -p config/includes.chroot/usr/share/applications
+          mkdir -p config/includes.chroot/etc/lightdm/lightdm.conf.d
+
+          cat > config/package-lists/winedesk.list.chroot <<'PACKAGES'
+          live-boot
+          live-config
+          live-config-systemd
+          systemd-sysv
+          xorg
+          lightdm
+          lightdm-gtk-greeter
+          openbox
+          tint2
+          pcmanfm
+          lxterminal
+          dbus-x11
+          network-manager
+          network-manager-gnome
+          policykit-1
+          gvfs
+          gvfs-backends
+          udisks2
+          xdg-utils
+          fonts-dejavu
+          fonts-liberation
+          sudo
+          ca-certificates
+          curl
+          wget
+          nano
+          less
+          wine
+          wine64
+          PACKAGES
+
+          cat > config/includes.chroot/etc/xdg/openbox/autostart <<'AUTOSTART'
+          # Start the panel, desktop icons/file manager, and network tray.
+          tint2 &
+          pcmanfm --desktop --profile=lxde &
+          nm-applet &
+          AUTOSTART
+          chmod 755 config/includes.chroot/etc/xdg/openbox/autostart
+
+          cat > config/includes.chroot/etc/xdg/tint2/tint2rc <<'TINT2'
+          # WineDesk Live panel
+          panel_items = LTSCP
+          panel_monitor = all
+          panel_position = bottom center horizontal
+          panel_size = 100% 36
+          panel_margin = 0 0
+          panel_padding = 6 3 6
+          panel_background_id = 1
+          wm_menu = 1
+          panel_dock = 0
+          panel_layer = top
+          panel_shrink = 0
+          autohide = 0
+          taskbar_mode = single_desktop
+          taskbar_hide_if_empty = 0
+          taskbar_padding = 3 2 3
+          task_icon_size = 22
+          task_text = 1
+          task_centered = 0
+          task_maximum_size = 180 28
+          task_font = Sans 9
+          task_tooltip = 1
+          task_thumbnail = 0
+          taskbar_background_id = 0
+          task_active_background_id = 2
+          task_urgent_background_id = 3
+          task_iconified = 1
+          task_lclick_action = toggle
+          task_mclick_action = close
+          task_rclick_action = none
+          time1_format = %H:%M
+          time1_font = Sans 9
+          clock_padding = 6 0
+          clock_background_id = 0
+          clock_tooltip = %A, %d %B %Y
+          systray_padding = 4 2 4
+          systray_background_id = 0
+          systray_sort = ascending
+          launcher_padding = 4 2 4
+          launcher_background_id = 0
+          launcher_icon_size = 24
+          launcher_item_app = /usr/share/applications/pcmanfm.desktop
+          launcher_item_app = /usr/share/applications/lxterminal.desktop
+          launcher_item_app = /usr/share/applications/winedesk-winecfg.desktop
+          battery_tooltip = 1
+          tooltip_show_timeout = 0.5
+          tooltip_hide_timeout = 0.1
+          tooltip_padding = 4 4
+          background_color = #222222 90
+          border_color = #444444 100
+          panel_background_id = 1
+          rounded = 0
+          border_width = 0
+          background_color = #20242b 95
+          border_color = #20242b 100
+          background_color = #3a4658 100
+          border_color = #3a4658 100
+          background_color = #a94442 100
+          border_color = #a94442 100
+          TINT2
+
+          cat > config/includes.chroot/usr/local/bin/winedesk-winecfg <<'WINECFG'
+          #!/bin/sh
+          exec winecfg
+          WINECFG
+          chmod 755 config/includes.chroot/usr/local/bin/winedesk-winecfg
+
+          cat > config/includes.chroot/usr/share/applications/winedesk-winecfg.desktop <<'DESKTOP'
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=Wine Configuration
+          Comment=Configure Wine and Windows compatibility settings
+          Exec=/usr/local/bin/winedesk-winecfg
+          Icon=wine
+          Terminal=false
+          Categories=System;Emulator;
+          DESKTOP
+
+          cat > config/includes.chroot/etc/lightdm/lightdm.conf.d/10-winedesk-autologin.conf <<'LIGHTDM'
+          [Seat:*]
+          autologin-user=user
+          autologin-user-timeout=0
+          user-session=openbox
+          greeter-session=lightdm-gtk-greeter
+          LIGHTDM
+
+          cat > config/hooks/normal/010-winedesk-desktop.hook.chroot <<'HOOK'
+          #!/bin/sh
+          set -e
+          # Ensure the panel launcher is executable and refresh desktop entries.
+          chmod 755 /usr/local/bin/winedesk-winecfg
+          if command -v update-desktop-database >/dev/null 2>&1; then
+            update-desktop-database /usr/share/applications || true
+          fi
+          HOOK
+          chmod 755 config/hooks/normal/010-winedesk-desktop.hook.chroot
+
+      - name: Configure Debian Live
+        run: |
+          sudo lb config \
+            --distribution trixie \
+            --architectures amd64 \
+            --binary-images iso-hybrid \
+            --bootloaders "grub-efi,syslinux" \
+            --archive-areas "main contrib non-free non-free-firmware" \
+            --debian-installer live \
+            --bootappend-live "boot=live components username=user hostname=winedesk locales=en_US.UTF-8 keyboard-layouts=us"
+
+      - name: Build bootable ISO
+        run: |
+          sudo lb build
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WineDesk-Live-ISO
+          path: |
+            live-image-amd64.hybrid.iso
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
