@@ -13,20 +13,9 @@ permissions:
 jobs:
   build-iso:
     runs-on: ubuntu-24.04
-    container:
-      image: debian:trixie
     timeout-minutes: 360
 
     steps:
-      - name: Install build tools
-        run: |
-          apt-get update
-          DEBIAN_FRONTEND=noninteractive apt-get install -y \
-            git ca-certificates \
-            live-build debootstrap squashfs-tools xorriso \
-            grub-pc-bin grub-efi-amd64-bin mtools dosfstools \
-            syslinux-common isolinux rsync cpio
-
       - name: Check out repository
         uses: actions/checkout@v4
 
@@ -181,24 +170,36 @@ jobs:
           HOOK
           chmod 755 config/hooks/normal/010-winedesk-desktop.hook.chroot
 
-      - name: Configure Debian Live
+      - name: Build bootable ISO in privileged Debian container
+        shell: bash
         run: |
           set -euxo pipefail
-          lb --version
-          lb config \
-            --distribution trixie \
-            --architectures amd64 \
-            --binary-images iso-hybrid \
-            --bootloaders "grub-efi,syslinux" \
-            --archive-areas "main contrib non-free non-free-firmware" \
-            --debian-installer live \
-            --bootappend-live "boot=live components username=user hostname=winedesk locales=en_US.UTF-8 keyboard-layouts=us"
 
-      - name: Build bootable ISO
-        run: |
-          set -euxo pipefail
-          lb build
-          ls -lh ./*.iso
+          docker run --privileged --rm \
+            -v "$GITHUB_WORKSPACE:/work" \
+            -w /work \
+            debian:trixie \
+            bash -euxc '
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                live-build debootstrap squashfs-tools xorriso \
+                grub-pc-bin grub-efi-amd64-bin mtools dosfstools \
+                syslinux-common isolinux rsync cpio
+
+              lb --version
+
+              lb config \
+                --distribution trixie \
+                --architectures amd64 \
+                --binary-images iso-hybrid \
+                --bootloaders "grub-efi,syslinux" \
+                --archive-areas "main contrib non-free non-free-firmware" \
+                --debian-installer live \
+                --bootappend-live "boot=live components username=user hostname=winedesk locales=en_US.UTF-8 keyboard-layouts=us"
+
+              lb build
+              ls -lh ./*.iso
+            '
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
