@@ -47,7 +47,7 @@ jobs:
           dbus-x11
           network-manager
           network-manager-gnome
-          policykit-1
+          polkitd
           gvfs
           gvfs-backends
           udisks2
