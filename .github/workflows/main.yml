@@ -13,19 +13,22 @@ permissions:
 jobs:
   build-iso:
     runs-on: ubuntu-24.04
+    container:
+      image: debian:trixie
     timeout-minutes: 360
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Install live-build tools
+      - name: Install build tools
         run: |
-          sudo apt-get update
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            git ca-certificates \
             live-build debootstrap squashfs-tools xorriso \
             grub-pc-bin grub-efi-amd64-bin mtools dosfstools \
             syslinux-common isolinux rsync cpio
+
+      - name: Check out repository
+        uses: actions/checkout@v4
 
       - name: Create WineDesk Live configuration
         shell: bash
@@ -171,7 +174,6 @@ jobs:
           cat > config/hooks/normal/010-winedesk-desktop.hook.chroot <<'HOOK'
           #!/bin/sh
           set -e
-          # Ensure the panel launcher is executable and refresh desktop entries.
           chmod 755 /usr/local/bin/winedesk-winecfg
           if command -v update-desktop-database >/dev/null 2>&1; then
             update-desktop-database /usr/share/applications || true
@@ -181,7 +183,9 @@ jobs:
 
       - name: Configure Debian Live
         run: |
-          sudo lb config \
+          set -euxo pipefail
+          lb --version
+          lb config \
             --distribution trixie \
             --architectures amd64 \
             --binary-images iso-hybrid \
@@ -192,7 +196,9 @@ jobs:
 
       - name: Build bootable ISO
         run: |
-          sudo lb build
+          set -euxo pipefail
+          lb build
+          ls -lh ./*.iso
 
       - name: Upload ISO artifact
         uses: actions/upload-artifact@v4
